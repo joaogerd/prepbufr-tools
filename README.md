@@ -10,6 +10,25 @@ Ferramentas em Python para **ler**, **gerar** e **validar** arquivos **PREPBUFR*
 * (Opcional) `write_prepbufr_min.py` — escritor mínimo de PREPBUFR (toy).
 
 > **Importante:** Estas ferramentas **não** executam QC físico/estatístico. O foco é **estrutura BUFR/PREPBUFR** e metadados/flags esperados pelo GSI.
+---
+
+## Instalação rápida
+
+```bash
+# Clone e entre no diretório
+git clone https://github.com/joaogerd/prepbufr-tools.git
+cd prepbufr-tools
+
+# Crie o ambiente
+mamba env create -f environment.yml
+
+# Ative o ambiente
+conda activate prepbufr-tools
+
+# Execute qualquer ferramenta
+python scripts/check_prepbufr.py arquivo.prepbufr
+
+```
 
 ---
 

@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.11"
+          channels: conda-forge
+          auto-update-conda: true
+          activate-environment: prepbufr
+          environment-file: ""
+      - name: Install deps
+        shell: bash -l {0}
+        run: |
+          conda install -c conda-forge nceplibs-bufr numpy -y
+          pip install tqdm
+      - name: Smoke check (scripts import)
+        shell: bash -l {0}
+        run: |
+          python -c "import ncepbufr; print('ncepbufr OK')"
+          python -c "import numpy; print('numpy OK')"
+

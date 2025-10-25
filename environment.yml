@@ -1,0 +1,64 @@
+# ============================================================
+#  environment.yml
+#  ------------------------------------------------------------
+#  Definição de ambiente Conda/Mamba para o projeto:
+#     PREPBUFR Tools (CPTEC/INPE)
+#
+#  Objetivo:
+#    Fornecer um ambiente isolado e reproduzível contendo todas
+#    as dependências necessárias para gerar, ler e validar
+#    arquivos PREPBUFR compatíveis com o GSI (NCEP/NCEPLIBS).
+#
+#  Uso:
+#    mamba env create -f environment.yml
+#    conda activate prepbufr-tools
+#
+#  Após ativação:
+#    python scripts/check_prepbufr.py arquivo.prepbufr
+#
+# ============================================================
+
+name: prepbufr-tools
+
+# ------------------------------------------------------------
+# Canais de pacotes
+# ------------------------------------------------------------
+# "conda-forge" contém o pacote oficial 'nceplibs-bufr',
+# fundamental para o módulo Python 'ncepbufr'.
+# ------------------------------------------------------------
+channels:
+  - conda-forge
+
+# ------------------------------------------------------------
+# Dependências principais
+# ------------------------------------------------------------
+# Inclui apenas bibliotecas leves e multiplataforma.
+# nceplibs-bufr: interface Python para a BUFRLIB (Fortran)
+# numpy: operações numéricas (matrizes/vetores)
+# tqdm: barra de progresso (opcional, mas útil)
+# ------------------------------------------------------------
+dependencies:
+  - python>=3.9
+  - numpy
+  - tqdm
+  - nceplibs-bufr
+
+  # ----------------------------------------------------------
+  # Pacotes extras via pip (dev/teste)
+  # ----------------------------------------------------------
+  - pip
+  - pip:
+      - black       # formatação automática
+      - ruff        # linting e análise estática
+      - pytest      # testes automatizados
+
+# ------------------------------------------------------------
+# Notas:
+# ------------------------------------------------------------
+# - Compatível com conda, mamba ou micromamba.
+# - Testado em Linux x86_64 (Python 3.11–3.12).
+# - Para HPC (Spack-Stack), o pacote 'nceplibs-bufr' pode já
+#   estar disponível no ambiente — neste caso, basta instalar
+#   apenas numpy/tqdm via conda ou pip.
+# ============================================================
+

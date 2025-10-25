@@ -1,0 +1,90 @@
+# ============================================================
+#  pyproject.toml
+#  ------------------------------------------------------------
+#  Metadados e configuração do pacote "prepbufr-tools"
+#  Permite instalação local via:
+#     pip install -e .
+#
+#  Inclui pontos de entrada (CLI), dependências e ferramentas
+#  auxiliares (black, ruff, pytest).
+# ============================================================
+
+[project]
+name = "prepbufr-tools"
+version = "1.0.0"
+description = "Python tools for generating, reading and validating PREPBUFR files (GSI-compatible)."
+authors = [
+  { name = "João Gerd Zell de Mattos", email = "joao.gerd@inpe.br" }
+]
+license = "LGPL-3.0"
+readme = "README.md"
+requires-python = ">=3.9"
+
+# ------------------------------------------------------------
+# Dependências principais
+# ------------------------------------------------------------
+dependencies = [
+  "numpy",
+  "tqdm",
+  "nceplibs-bufr"
+]
+
+# ------------------------------------------------------------
+# Scripts (Entry Points)
+# ------------------------------------------------------------
+# Permitem executar os scripts diretamente no terminal após
+# instalação com `pip install -e .`:
+#
+#   check-prepbufr arquivo.prepbufr
+#   read-prepbufr arquivo.prepbufr
+#   write-prepbufr
+#   prepbufr-cptec-gsi --type adpsfc ...
+# ------------------------------------------------------------
+[project.scripts]
+check-prepbufr = "scripts.check_prepbufr:main"
+read-prepbufr = "scripts.read_prepbufr_min:main"
+write-prepbufr = "scripts.write_prepbufr_min:main"
+prepbufr-cptec-gsi = "scripts.prepbufr_cptec_gsi:main"
+
+# ------------------------------------------------------------
+# Sistema de build
+# ------------------------------------------------------------
+# "setuptools" é suficiente, pois o projeto é leve e baseado
+# em scripts independentes.
+# ------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+# ------------------------------------------------------------
+# Ferramentas auxiliares de desenvolvimento
+# ------------------------------------------------------------
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+# ============================================================
+#  Dicas rápidas:
+#
+#  1. Instalar no modo desenvolvedor:
+#       pip install -e .
+#
+#  2. Executar scripts:
+#       check-prepbufr arquivo.prepbufr
+#
+#  3. Atualizar ambiente:
+#       mamba env update -f environment.yml
+#
+#  4. Desinstalar:
+#       pip uninstall prepbufr-tools
+# ============================================================
+
