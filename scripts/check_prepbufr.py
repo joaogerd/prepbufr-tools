@@ -4,88 +4,48 @@
 check_prepbufr.py
 =================
 
-Validador “smoke test” para arquivos **PREPBUFR** visando compatibilidade com o GSI.
+Validador unificado para arquivos PREPBUFR, com dois níveis de checagem:
 
-Este utilitário realiza checagens **estruturais** e de **plausibilidade** sobre cada
-subset (relatório) em um arquivo PREPBUFR, ajudando a diagnosticar problemas comuns
-em pipelines que geram PREPBUFR (ex.: conversões BUFR→PREPBUFR). Ele **não** executa
-controle de qualidade físico/estatístico — seu objetivo é verificar se o arquivo
-está **bem formado** e carrega os **metadados** e **sequências de evento** esperados
-pelo GSI.
+1) **Estrutural (mínimo GSI)** → o que realmente importa para saber se o GSI
+   consegue ler e usar o arquivo sem quebrar:
 
-Principais verificações
------------------------
-1) **Cabeçalho mínimo** por subset:
-   - Mnemonics requeridos: ``XOB YOB DHR TYP ELV SAID T29``.
-   - Ausência de qualquer um conta como *header incompleto*.
+   - header essencial presente: XOB, YOB, DHR, TYP;
+   - lon/lat grosseiramente válidos;
+   - existe pelo menos uma variável "útil":
+       TOB, QOB, UOB, VOB, POB, ZOB ou PRSS.
 
-2) **Janela de tempo**:
-   - Verifica se ``|DHR| ≤ twind_h`` (hora relativa ao ciclo).
-   - Se ``DHR`` estiver ausente ou fora da janela, é contabilizado.
+   Esse nível define:
+   - `Status estrutural (GSI): OK / PROBLEMAS_ESTRUTURAIS`;
+   - código de saída do programa (0 se OK, 1 se PROBLEMAS_ESTRUTURAIS);
+   - campo `approved` e `% approved` no CSV (`--csv`).
 
-3) **Sequências de eventos** (Table D) com *evento final*:
-   - Procura ``TEVN`` (checando ``TQM``) ou ``WEVN`` (checando ``WQM``).
-   - Se não encontrar, tenta ``PEVN/ZEVN/QEVN``.
-   - Ausência total conta como *sem eventos finais*.
+2) **Diagnóstico** → checagens que **não impedem** o GSI de rodar, mas ajudam
+   a entender se os dados estão "bonitos" e coerentes:
 
-4) **Validação de unidades/valores plausíveis** (habilitado por padrão):
-   - Checa ranges plausíveis para: ``XOB/YOB`` (graus),
-     ``TOB`` (K), ``POB`` (hPa), ``ZOB`` (m), ``UOB/VOB`` (m s⁻¹), ``QOB`` (kg kg⁻¹).
-   - Se o campo existir e estiver fora do intervalo esperado, o subset falha
-     na checagem de unidades.
-   - **Pressão**: aceite ``--pressure-unit {hpa,cb,pa,auto}`` (default: ``hpa``);
-     em ``auto`` é feita uma **autodetecção** pela mediana de ``POB/PRSS``.
+   - presença (ou não) de eventos finais (TEVN/WEVN/PEVN/ZEVN/QEVN);
+   - janela de tempo: |DHR| <= twind (padrão ±3h);
+   - faixas/unidades plausíveis de XOB/YOB/TOB/POB/ZOB/UOB/VOB/QOB/PRSS/PWO/etc;
+   - (opcional via --check-oberrs) presença de erros de observação:
+       TOB→TOE, U/V→WOE, POB→POE, ZOB→ZOE, QOB→QOE;
+   - (opcional via --kind adpsfc) campos de superfície (PRSS/PWO/CAT).
 
-5) **Erros de observação** (opcional via ``--check-oberrs``):
-   - Quando a variável existe, exige o respectivo erro:
-     ``TOB→TOE``, ``U/V→WOE``, ``POB→POE``, ``ZOB→ZOE``, ``QOB→QOE``.
+   Esse nível define:
+   - `Status diagnóstico: OK / ATENÇÃO`;
+   - contadores em `Resumo diagnóstico`;
+   - colunas extras no CSV e detalhes em `--report-csv` / `--vars-csv`.
 
-6) **Checagens específicas de ADPSFC** (opcional via ``--kind adpsfc``):
-   - Requer presença de ``PRSS``, ``PWO`` e ``CAT`` (quando o subset é
-     “significativo”: header ok + eventos).
-   - Valida ranges plausíveis de ``PRSS`` e ``PWO``.
+A ideia é:
 
-7) **Relatórios**:
-   - ``--csv``: CSV **por msg_type** (total, aprovados, % aprovado, contagens de falha).
-   - ``--where N``: imprime até **N exemplos** de “onde” ocorreram falhas (lon/lat/DHR).
-   - ``--report-csv``: CSV **detalhado**, 1 linha por falha (tipo, msg_type, subset, var).
-   - ``--vars-csv``: CSV **agregado** com contagem de falhas de **unidade** por variável/msg_type.
-
-Critério de "aprovado"
-----------------------
-Um subset é considerado **aprovado** se **todas** as checagens aplicáveis a ele
-passarem: header OK, dentro da janela, possui evento final, unidades plausíveis
-e, se solicitado, erros de observação presentes e campos ADPSFC válidos.
-
-Saída e código de retorno
--------------------------
-- Mostra um resumo geral e inventário por ``msg_type``.
-- Retorna **0** se o status geral for **PASSOU** (nenhuma falha nos contadores
-  principais habilitados); caso contrário, retorna **1**.
+- **GSI** se preocupa com: "o arquivo é estruturalmente utilizável?"  
+- Você, como produtor de PREPBUFR, pode ainda se preocupar com:
+  "minhas variáveis/erros/eventos/unidades fazem sentido?".
 
 Requisitos
 ----------
 - Python 3.8+
-- ``nceplibs-bufr`` (conda-forge) para o módulo ``ncepbufr``.
-- Opcional: ``tqdm`` para a barra de progresso (``--progress bar``).
-
-Exemplos
---------
-Básico:
-
-    python check_prepbufr.py seu.prepbufr
-
-Com barra de progresso e janela de ±6 h:
-
-    python check_prepbufr.py seu.prepbufr --progress bar --twind 6
-
-Exigindo erros de observação, checando ADPSFC, autodetectando pressão e
-emitindo relatórios:
-
-    python check_prepbufr.py seu.prepbufr \
-      --check-oberrs --kind adpsfc --pressure-unit auto \
-      --where 5 --csv por_tipo.csv \
-      --report-csv falhas_detalhe.csv --vars-csv falhas_unidades.csv
+- nceplibs-bufr (ncepbufr) via conda-forge
+- numpy
+- (opcional) tqdm para barra de progresso (--progress bar)
 """
 
 from __future__ import annotations
@@ -94,185 +54,142 @@ import sys
 import csv
 import argparse
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 
 import numpy as np
 from statistics import median
 from collections import defaultdict
+
 import ncepbufr  # conda-forge: nceplibs-bufr
 
-# --------------------------------- Config -------------------------------------
+# -----------------------------------------------------------------------------
+# Configuração geral
+# -----------------------------------------------------------------------------
 
-#: Mnemonics de header que devem existir em cada subset.
-REQ_HDR: tuple[str, ...] = tuple("XOB YOB DHR TYP ELV SAID T29".split())
+# Header mínimo para o GSI
+REQ_HDR_GSI: Tuple[str, ...] = ("XOB", "YOB", "DHR", "TYP")
 
-#: Sequências Table D normalmente presentes em PREPBUFR (usadas na detecção de “evento final”).
-REQ_SEQS: tuple[str, ...] = ("TEVN", "WEVN", "PEVN", "ZEVN", "QEVN")
+# Sequências Table D para eventos (diagnóstico)
+REQ_SEQS: Tuple[str, ...] = ("TEVN", "WEVN", "PEVN", "ZEVN", "QEVN")
 
-#: Meia-largura padrão da janela de tempo ``|DHR|`` (em horas).
+# Janela de tempo típica
 DEFAULT_TWIND_H: float = 3.0
 
-#: Periodicidade de log do contador simples (quando ``--progress counter``).
+# Progresso
 DEFAULT_PROGRESS_EVERY: int = 10_000
 
-#: Intervalos de **plausibilidade** (validação de unidades por variável).
-#: Obs.: são limites operacionais razoáveis (não normas rígidas WMO).
+# Faixas de plausibilidade (diagnóstico)
 RANGE = {
-    "XOB": (-180.0, 180.0),    # graus (longitude)
-    "YOB": (-90.0, 90.0),      # graus (latitude)
-    "TOB": (180.0, 340.0),     # Kelvin (temperatura)
-    "POB": (1.0, 1100.0),      # hPa (pressão em nível)
-    "ZOB": (-500.0, 40000.0),  # m (altura/geopotencial) (teto mais realista p/ obs; 40 km)
-    "UOB": (-120.0, 120.0),    # m/s (vento U)
-    "VOB": (-120.0, 120.0),    # m/s (vento V)
-    "QOB": (0.0, 0.05),        # kg/kg (umidade específica) (50 g/kg já é extremo tropical)
-    # Extras típicos de ADPSFC:
-    "PRSS": (500.0, 1085.0),   # hPa (pressão à superfície) (superfície realista; evita unidade errada)
-    "PWO": (0.0, 100.0),       # mm (ou kg/m^2) — apenas plausibilidade
-    "DHR":  (-6.0, 6.0),       # h (janela típica de ±6h)
-    "HOVI": (0.0, 100000.0),   # m (visibilidade)
-    "TDO":  (173.0, 333.0),    # K (ponto de orvalho; -100 a +60 °C ~ plausível)
-    "MSST": (271.0, 313.0),    # K (SST de -2 a 40 °C)
+    "XOB": (-180.0, 180.0),
+    "YOB": (-90.0, 90.0),
+    "TOB": (180.0, 340.0),
+    "POB": (1.0, 1100.0),
+    "ZOB": (-500.0, 40000.0),
+    "UOB": (-120.0, 120.0),
+    "VOB": (-120.0, 120.0),
+    "QOB": (0.0, 0.05),
+    "PRSS": (500.0, 1085.0),
+    "PWO": (0.0, 100.0),
+    "DHR": (-6.0, 6.0),
+    "HOVI": (0.0, 100000.0),
+    "TDO": (173.0, 333.0),
+    "MSST": (271.0, 313.0),
 }
 
-# Unidade de pressão (para interpretar POB/PRSS do arquivo).
-# A validação usa ranges base em hPa; aplicamos um fator de escala para
-# converter o valor lido para hPa antes de validar.
+# Unidade de pressão (para interpretar POB/PRSS) e autodetecção
 PRESSURE_UNITS = ("hpa", "cb", "pa", "auto")
 DEFAULT_PRESSURE_UNIT = "hpa"
-PRESSURE_AUTODETECT_SAMPLES = 500  # nº máximo de amostras para auto
-PRESSURE_AUTODETECT_THRESH = ( (50,1100), (5,110), (5000,110000) )  # hPa, cb, Pa janelas plausíveis
+PRESSURE_AUTODETECT_SAMPLES = 500
+PRESSURE_AUTODETECT_THRESH = (
+    (50, 1100),     # hPa
+    (5, 110),       # cb
+    (5000, 110000)  # Pa
+)
 
-# Tipos de falha reconhecidos para o relatório detalhado
-FAIL_HDR      = "bad_header"
-FAIL_EVENTS   = "no_final_event"
-FAIL_TIME     = "time_out_of_window"
-FAIL_UNITS    = "bad_units"
-FAIL_OBERRS   = "missing_oberrs"
-FAIL_ADPSFC   = "missing_adpsfc"
+# Limites estruturais para lon/lat (mínimo GSI)
+LON_RANGE_STRUCT = (-180.0, 360.0)
+LAT_RANGE_STRUCT = (-90.0, 90.0)
+
+# Missing típico da BUFRLIB
+BUFR_MISSING = 1.0e10
+
+# Tipos de falha (para report-csv)
+FAIL_GSI_HDR = "gsi_bad_header"
+FAIL_GSI_LONLAT = "gsi_bad_lonlat"
+FAIL_GSI_NO_USEFUL = "gsi_no_useful"
+
+FAIL_EVENTS = "no_final_event"
+FAIL_TIME = "time_out_of_window"
+FAIL_UNITS = "bad_units"
+FAIL_OBERRS = "missing_oberrs"
+FAIL_ADPSFC = "missing_adpsfc"
+
 
 @dataclass
 class FailRecord:
     msg_type: str
     subset_idx: int
     fail_type: str
-    var: str | None
+    var: Optional[str]
 
-# --------------------------------- Model --------------------------------------
 
 @dataclass
 class Summary:
-    """Resumo final das checagens executadas sobre o arquivo PREPBUFR.
-
-    Attributes
-    ----------
-    nmsg : int
-        Número de mensagens BUFR no arquivo.
-    nsub : int
-        Número total de subsets (relatórios) processados.
-    bad_hdr : int
-        Subsets com header incompleto (faltando algum de REQ_HDR).
-    no_events : int
-        Subsets sem **qualquer** evento final detectado (TEVN/WEVN/PEVN/ZEVN/QEVN).
-    time_oow : int
-        Subsets cujo ``DHR`` está fora da janela especificada (|DHR| > twind_h) ou ausente.
-    bad_units : int
-        Subsets que apresentaram valores fora dos intervalos plausíveis (unidades).
-    miss_oberrs : int
-        Subsets em que faltam erros de observação (apenas se ``--check-oberrs``).
-    miss_adpsfc : int
-        Subsets ADPSFC faltando ``PRSS/PWO/CAT`` ou com ``PRSS/PWO`` fora de faixa (se ``--kind adpsfc``).
-    types : Dict[object, int]
-        Inventário bruto de subsets por ``msg_type`` (chave pode ser bytes).
-    per_type_total : Dict[object, int]
-        Total de subsets por ``msg_type``.
-    per_type_approved : Dict[object, int]
-        Subsets aprovados por ``msg_type`` (conforme critério descrito no docstring).
-    per_type_bad_hdr : Dict[object, int]
-        Contagem de header incompleto por ``msg_type``.
-    per_type_no_events : Dict[object, int]
-        Contagem de “sem eventos finais” por ``msg_type``.
-    per_type_time_oow : Dict[object, int]
-        Contagem de “fora da janela de tempo” por ``msg_type``.
-    per_type_bad_units : Dict[object, int]
-        Contagem de “unidades/valores implausíveis” por ``msg_type``.
-    per_type_miss_oberrs : Dict[object, int]
-        Contagem de “faltando erros de observação” por ``msg_type`` (se habilitado).
-    per_type_miss_adpsfc : Dict[object, int]
-        Contagem de “faltando/fora de faixa PRSS/PWO/CAT” por ``msg_type`` (ADPSFC).
-    status : str
-        "PASSOU" se todos os contadores aplicáveis forem zero; caso contrário "ATENÇÃO".
-    pressure_unit_used : str
-        Unidade de pressão efetivamente usada (após `auto` ou default).
-    where_* : list[str]
-        Exemplos "onde" (linhas já formatadas) para cada tipo de falha.
-    fail_records : list[FailRecord]
-        Registros detalhados de falhas (para os CSVs detalhados).
-    """
+    # Totais
     nmsg: int
     nsub: int
-    bad_hdr: int
-    no_events: int
-    time_oow: int
-    bad_units: int
-    miss_oberrs: int
-    miss_adpsfc: int
-    types: Dict[object, int]
+
+    # Estruturais (mínimo GSI)
+    gsi_bad_hdr: int
+    gsi_bad_lonlat: int
+    gsi_no_useful: int
     per_type_total: Dict[object, int]
-    per_type_approved: Dict[object, int]
-    per_type_bad_hdr: Dict[object, int]
+    per_type_gsi_bad_hdr: Dict[object, int]
+    per_type_gsi_bad_lonlat: Dict[object, int]
+    per_type_gsi_no_useful: Dict[object, int]
+    per_type_gsi_approved: Dict[object, int]
+
+    # Diagnósticos
+    diag_no_events: int
+    diag_time_oow: int
+    diag_bad_units: int
+    diag_miss_oberrs: int
+    diag_miss_adpsfc: int
     per_type_no_events: Dict[object, int]
     per_type_time_oow: Dict[object, int]
     per_type_bad_units: Dict[object, int]
     per_type_miss_oberrs: Dict[object, int]
     per_type_miss_adpsfc: Dict[object, int]
-    status: str
+
+    # Status
+    status_struct: str
+    status_diag: str
     pressure_unit_used: str
-    # Amostras "onde" (até N por tipo de falha)
-    where_hdr: list[str]
-    where_events: list[str]
-    where_time: list[str]
-    where_units: list[str]
-    # Registros detalhados para CSV
-    fail_records: list[FailRecord]
 
-# ------------------------------ Progress utils --------------------------------
+    # Amostras "onde"
+    where_gsi_hdr: List[str]
+    where_gsi_lonlat: List[str]
+    where_gsi_no_useful: List[str]
+    where_events: List[str]
+    where_time: List[str]
+    where_units: List[str]
 
-def count_subsets(path: str) -> int:
-    """Conta rapidamente o número total de subsets, somando ``nsubsets`` por mensagem.
+    # Registros detalhados de falhas (para report-csv)
+    fail_records: List[FailRecord]
 
-    Faz um *pré-passo* sem carregar subsets individualmente, útil para configurar a
-    barra de progresso com total conhecido.
-    """
-    b = ncepbufr.open(path)
-    total = 0
-    try:
-        adv = b.advance
-        while adv() == 0:
-            total += getattr(b, "nsubsets", 0)
-    finally:
-        b.close()
-    return total
 
-def _maybe_get_tqdm():
-    """Tenta importar ``tqdm`` e retorna o construtor da barra se disponível."""
-    try:
-        from tqdm import tqdm  # type: ignore
-        return tqdm
-    except Exception:
-        return None
-
-# ------------------------------ Low-level helpers -----------------------------
+# -----------------------------------------------------------------------------
+# Helpers de leitura e missing
+# -----------------------------------------------------------------------------
 
 def _read1(read, mnem: str) -> Optional[np.ndarray]:
-    """Lê um mnemônico com ``read`` e retorna um ``np.ndarray`` (ou ``None``)."""
     arr = read(mnem)
     if getattr(arr, "size", 0):
         return np.asarray(arr)
     return None
 
+
 def _read_scalar(read, mnem: str) -> Optional[float]:
-    """Lê um mnemônico escalar (primeiro elemento) e retorna ``float`` (ou ``None``)."""
     a = _read1(read, mnem)
     if a is None:
         return None
@@ -281,16 +198,24 @@ def _read_scalar(read, mnem: str) -> Optional[float]:
     except Exception:
         return None
 
-def _has_header_fast(read, required: tuple[str, ...]) -> bool:
-    """Retorna ``True`` se **todos** os mnemonics de ``required`` estiverem presentes."""
-    for m in required:
-        arr = read(m)
-        if not getattr(arr, "size", 0):
-            return False
-    return True
 
-def _last_event(seq: Optional[np.ndarray]) -> tuple[Optional[np.ndarray], int]:
-    """Normaliza a sequência para 2D e retorna (matriz, n_eventos); (None, 0) se inválida."""
+def _is_missing(val: Optional[float]) -> bool:
+    if val is None:
+        return True
+    if not np.isfinite(val):
+        return True
+    if abs(val) >= BUFR_MISSING * 0.9:
+        return True
+    return False
+
+
+def _in_range(val: Optional[float], lo: float, hi: float) -> bool:
+    if _is_missing(val):
+        return False
+    return lo <= val <= hi
+
+
+def _last_event(seq: Optional[np.ndarray]) -> Tuple[Optional[np.ndarray], int]:
     if seq is None:
         return None, 0
     a = np.asarray(seq)
@@ -298,41 +223,74 @@ def _last_event(seq: Optional[np.ndarray]) -> tuple[Optional[np.ndarray], int]:
         return a, a.shape[1]
     return None, 0
 
-def _in_range(val: Optional[float], lo: float, hi: float) -> bool:
-    """Checa se ``val`` é finito e está no intervalo fechado ``[lo, hi]``."""
-    if val is None or not np.isfinite(val):
-        return False
-    return (val >= lo) and (val <= hi)
 
-# --------------------------------- Core ---------------------------------------
+def _has_gsi_header(read) -> bool:
+    """Header mínimo estrutural para o GSI."""
+    for m in REQ_HDR_GSI:
+        arr = read(m)
+        if not getattr(arr, "size", 0):
+            return False
+    return True
+
 
 def _b2s(x) -> str:
     return x.decode() if isinstance(x, (bytes, bytearray)) else str(x)
 
-def _fmt_where(mtyp: object, idx: int, xob: Optional[float], yob: Optional[float], dhr: Optional[float], extra: str="") -> str:
+
+def _fmt_where(
+    mtyp: object,
+    idx: int,
+    xob: Optional[float],
+    yob: Optional[float],
+    dhr: Optional[float],
+    extra: str = "",
+) -> str:
     xs = "nan" if xob is None else f"{xob:.3f}"
     ys = "nan" if yob is None else f"{yob:.3f}"
     hs = "nan" if dhr is None else f"{dhr:.2f}"
     return f"  - {_b2s(mtyp)} subset#{idx} @ lon={xs} lat={ys} dhr={hs}{extra}"
 
+
 def _pressure_scale(unit: str) -> float:
-    """Retorna fator p/ converter valores lidos → hPa.
-       hpa: 1.0 ; cb: 10.0 (1 cb = 10 hPa) ; pa: 1/100 (100 Pa = 1 hPa)
-    """
     unit = (unit or "").lower()
     if unit == "hpa":
         return 1.0
     if unit == "cb":
-        return 10.0
+        return 10.0       # 1 cb = 10 hPa
     if unit == "pa":
-        return 1.0/100.0
+        return 1.0 / 100.0  # 100 Pa = 1 hPa
     return 1.0
 
+
+# -----------------------------------------------------------------------------
+# Progresso
+# -----------------------------------------------------------------------------
+
+def _maybe_get_tqdm():
+    try:
+        from tqdm import tqdm  # type: ignore
+        return tqdm
+    except Exception:
+        return None
+
+
+def _count_subsets(path: str) -> int:
+    b = ncepbufr.open(path)
+    total = 0
+    try:
+        while b.advance() == 0:
+            total += getattr(b, "nsubsets", 0)
+    finally:
+        b.close()
+    return total
+
+
+# -----------------------------------------------------------------------------
+# Autodeteção de unidade de pressão
+# -----------------------------------------------------------------------------
+
 def _autodetect_pressure_unit(path: str, max_samples: int = PRESSURE_AUTODETECT_SAMPLES) -> str:
-    """Lê rapidamente `POB` e `PRSS` para estimar unidade (hpa/cb/pa).
-       Heurística baseada na mediana de valores positivos.
-    """
-    vals = []
+    vals: List[float] = []
     b = ncepbufr.open(path)
     try:
         cnt = 0
@@ -352,16 +310,27 @@ def _autodetect_pressure_unit(path: str, max_samples: int = PRESSURE_AUTODETECT_
                             pass
     finally:
         b.close()
+
     if not vals:
-        return "hpa"  # fallback razoável
+        return "hpa"
+
     med = median(vals)
     hpa_lo, hpa_hi = PRESSURE_AUTODETECT_THRESH[0]
-    cb_lo, cb_hi   = PRESSURE_AUTODETECT_THRESH[1]
-    pa_lo, pa_hi   = PRESSURE_AUTODETECT_THRESH[2]
-    if hpa_lo <= med <= hpa_hi: return "hpa"
-    if cb_lo  <= med <= cb_hi:  return "cb"
-    if pa_lo  <= med <= pa_hi:  return "pa"
-    return "hpa"  # fallback
+    cb_lo, cb_hi = PRESSURE_AUTODETECT_THRESH[1]
+    pa_lo, pa_hi = PRESSURE_AUTODETECT_THRESH[2]
+
+    if hpa_lo <= med <= hpa_hi:
+        return "hpa"
+    if cb_lo <= med <= cb_hi:
+        return "cb"
+    if pa_lo <= med <= pa_hi:
+        return "pa"
+    return "hpa"
+
+
+# -----------------------------------------------------------------------------
+# Núcleo: check_file
+# -----------------------------------------------------------------------------
 
 def check_file(
     path: str,
@@ -371,90 +340,92 @@ def check_file(
     progress_every: int = DEFAULT_PROGRESS_EVERY,
     quiet: bool = False,
     check_oberrs: bool = False,
-    pressure_unit: str = DEFAULT_PRESSURE_UNIT,  # 'hpa' | 'cb' | 'pa' | 'auto'
-    where_max: int = 0,                  # imprime até N exemplos "onde" por tipo
-    report_csv: Optional[str] = None,    # CSV detalhado linha-a-linha das falhas
-    vars_csv: Optional[str] = None,      # CSV agregado: contagem por variável/msg_type
+    pressure_unit: str = DEFAULT_PRESSURE_UNIT,
+    where_max: int = 0,
+    report_csv: Optional[str] = None,
+    vars_csv: Optional[str] = None,
     kind: Optional[str] = None,
     csv_out: Optional[str] = None,
 ) -> Summary:
-    """Executa todas as checagens sobre um arquivo PREPBUFR."""
-    # Configura barra de progresso se solicitado
-    total_subsets: Optional[int] = None
-    pbar = None
+    # Progresso
     tqdm = None
+    pbar = None
+    total_subsets: Optional[int] = None
 
     if not quiet and progress == "bar":
         tqdm = _maybe_get_tqdm()
         if tqdm is None:
-            print("[WARN] tqdm não encontrado; usando progresso 'counter'. "
-                  "Instale com: pip install tqdm", file=sys.stderr)
+            print("[WARN] tqdm não encontrado; usando progresso 'counter'.", file=sys.stderr)
             progress = "counter"
         else:
-            # pré-passo para contar subsets
-            total_subsets = count_subsets(path)
+            total_subsets = _count_subsets(path)
             pbar = tqdm(total=total_subsets, desc="Processando subsets", unit="subset")
 
-    # Unidade de pressão: resolve 'auto' antes do processamento principal
-    pressure_unit_used = pressure_unit
-    if pressure_unit_used not in PRESSURE_UNITS:
-        pressure_unit_used = DEFAULT_PRESSURE_UNIT
+    # Unidade de pressão
+    pressure_unit_used = pressure_unit if pressure_unit in PRESSURE_UNITS else DEFAULT_PRESSURE_UNIT
     if pressure_unit_used == "auto":
         pressure_unit_used = _autodetect_pressure_unit(path)
         if not quiet:
             print(f"[INFO] Unidade de pressão autodetectada: {pressure_unit_used}")
 
+    pscale = _pressure_scale(pressure_unit_used)
+
     b = ncepbufr.open(path)
 
-    # buffers para "onde"
-    where_hdr: list[str] = []
-    where_events: list[str] = []
-    where_time: list[str] = []
-    where_units: list[str] = []
-    fail_records: list[FailRecord] = []
-    units_by_var_and_type = defaultdict(int)  # (msg_type,mnem) -> count
+    # Contadores e estruturas
+    nmsg = 0
+    nsub = 0
 
-    # Contadores globais
-    nmsg = nsub = 0
-    bad_hdr = 0
-    no_events = 0
-    time_oow = 0
-    bad_units = 0
-    miss_oberrs = 0
-    miss_adpsfc = 0
-
-    # Inventários
-    types: Dict[object, int] = {}
+    # Estrutural GSI
+    gsi_bad_hdr = 0
+    gsi_bad_lonlat = 0
+    gsi_no_useful = 0
     per_type_total: Dict[object, int] = {}
-    per_type_approved: Dict[object, int] = {}
-    per_type_bad_hdr: Dict[object, int] = {}
+    per_type_gsi_bad_hdr: Dict[object, int] = {}
+    per_type_gsi_bad_lonlat: Dict[object, int] = {}
+    per_type_gsi_no_useful: Dict[object, int] = {}
+    per_type_gsi_approved: Dict[object, int] = {}
+
+    # Diagnósticos
+    diag_no_events = 0
+    diag_time_oow = 0
+    diag_bad_units = 0
+    diag_miss_oberrs = 0
+    diag_miss_adpsfc = 0
     per_type_no_events: Dict[object, int] = {}
     per_type_time_oow: Dict[object, int] = {}
     per_type_bad_units: Dict[object, int] = {}
     per_type_miss_oberrs: Dict[object, int] = {}
     per_type_miss_adpsfc: Dict[object, int] = {}
 
-    def inc(d: Dict[object, int], k: object, by: int = 1):
-        """Incrementa d[k] em ``by`` (cria a chave se necessário)."""
-        d[k] = d.get(k, 0) + by
+    # "Onde" e detalhes
+    where_gsi_hdr: List[str] = []
+    where_gsi_lonlat: List[str] = []
+    where_gsi_no_useful: List[str] = []
+    where_events: List[str] = []
+    where_time: List[str] = []
+    where_units: List[str] = []
+    fail_records: List[FailRecord] = []
 
-    pscale = _pressure_scale(pressure_unit_used)  # escala para converter → hPa
+    units_by_var_and_type = defaultdict(int)  # (msg_type, var) -> count
+
+    def inc(d: Dict[object, int], k: object, by: int = 1):
+        d[k] = d.get(k, 0) + by
 
     try:
         advance = b.advance
         load_subset = b.load_subset
         read = b.read_subset
 
-        # Loop principal: mensagens → subsets
         while advance() == 0:
             nmsg += 1
             mtyp = b.msg_type
-            if mtyp not in types:
-                types[mtyp] = 0
             if mtyp not in per_type_total:
                 per_type_total[mtyp] = 0
-                per_type_approved[mtyp] = 0
-                per_type_bad_hdr[mtyp] = 0
+                per_type_gsi_bad_hdr[mtyp] = 0
+                per_type_gsi_bad_lonlat[mtyp] = 0
+                per_type_gsi_no_useful[mtyp] = 0
+                per_type_gsi_approved[mtyp] = 0
                 per_type_no_events[mtyp] = 0
                 per_type_time_oow[mtyp] = 0
                 per_type_bad_units[mtyp] = 0
@@ -463,61 +434,94 @@ def check_file(
 
             while load_subset() == 0:
                 nsub += 1
-                types[mtyp] += 1
-                # Leitura básica para relatórios "onde"
-                xob = _read_scalar(read, "XOB")
-                yob = _read_scalar(read, "YOB")
-                dhr_dbg = _read_scalar(read, "DHR")
                 inc(per_type_total, mtyp)
 
-                # --- Progresso
+                # progresso
                 if not quiet:
                     if pbar is not None:
                         pbar.update(1)
                     elif progress == "counter" and progress_every > 0 and (nsub % progress_every == 0):
                         print(f"[INFO] {nsub:,} subsets processados...", flush=True)
 
-                # ---- Header
-                subset_bad_hdr = False
-                if not _has_header_fast(read, REQ_HDR):
-                    bad_hdr += 1
-                    inc(per_type_bad_hdr, mtyp)
-                    subset_bad_hdr = True
-                    if where_max and len(where_hdr) < where_max:
-                        where_hdr.append(_fmt_where(mtyp, nsub, xob, yob, dhr_dbg))
-                    fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_HDR, None))
+                # leituras básicas para relatórios
+                xob = _read_scalar(read, "XOB")
+                yob = _read_scalar(read, "YOB")
+                dhr = _read_scalar(read, "DHR")
 
-                # ---- Janela de tempo
-                subset_time_oow = False
-                if dhr_dbg is None or not (-twind_h <= dhr_dbg <= twind_h):
-                    time_oow += 1
-                    inc(per_type_time_oow, mtyp)
-                    subset_time_oow = True
-                    if where_max and len(where_time) < where_max:
-                        where_time.append(_fmt_where(mtyp, nsub, xob, yob, dhr_dbg))
-                    fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_TIME, None))
+                # -------------------------------
+                # 1) Checagem estrutural (mínimo GSI)
+                # -------------------------------
+                subset_gsi_hdr_bad = False
+                subset_gsi_lonlat_bad = False
+                subset_gsi_no_useful = False
 
-                # ---- Eventos
-                subset_no_events = False
+                # Header essencial
+                if not _has_gsi_header(read):
+                    subset_gsi_hdr_bad = True
+                    gsi_bad_hdr += 1
+                    inc(per_type_gsi_bad_hdr, mtyp)
+                    if where_max and len(where_gsi_hdr) < where_max:
+                        where_gsi_hdr.append(_fmt_where(mtyp, nsub, xob, yob, dhr))
+                    fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_GSI_HDR, None))
+
+                # lon/lat grosseiramente válidos (se header não está completamente quebrado)
+                if not subset_gsi_hdr_bad:
+                    if (not _in_range(xob, *LON_RANGE_STRUCT)) or (not _in_range(yob, *LAT_RANGE_STRUCT)):
+                        subset_gsi_lonlat_bad = True
+                        gsi_bad_lonlat += 1
+                        inc(per_type_gsi_bad_lonlat, mtyp)
+                        if where_max and len(where_gsi_lonlat) < where_max:
+                            where_gsi_lonlat.append(_fmt_where(mtyp, nsub, xob, yob, dhr))
+                        fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_GSI_LONLAT, None))
+
+                # Pelo menos uma variável "útil" (TOB/QOB/U/V/POB/ZOB/PRSS)
+                useful_mnems = ("TOB", "QOB", "UOB", "VOB", "POB", "ZOB", "PRSS")
+                has_useful = False
+                for nm in useful_mnems:
+                    arr = _read1(read, nm)
+                    if arr is not None:
+                        try:
+                            v = float(arr.flat[0])
+                            if not _is_missing(v):
+                                has_useful = True
+                                break
+                        except Exception:
+                            continue
+                if not has_useful:
+                    subset_gsi_no_useful = True
+                    gsi_no_useful += 1
+                    inc(per_type_gsi_no_useful, mtyp)
+                    if where_max and len(where_gsi_no_useful) < where_max:
+                        where_gsi_no_useful.append(_fmt_where(mtyp, nsub, xob, yob, dhr))
+                    fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_GSI_NO_USEFUL, None))
+
+                # aprovado estrutural GSI?
+                gsi_ok = not (subset_gsi_hdr_bad or subset_gsi_lonlat_bad or subset_gsi_no_useful)
+                if gsi_ok:
+                    inc(per_type_gsi_approved, mtyp)
+
+                # -------------------------------
+                # 2) Diagnósticos
+                # -------------------------------
+
+                # 2.1. Eventos
                 seq_ok = False
+                subset_no_events = False
 
-                # Tenta TEVN/WEVN com validação de QM
+                # Tenta TEVN/WEVN com QM
                 for seq_name in ("TEVN", "WEVN"):
                     seq = _read1(read, seq_name)
                     a, nev = _last_event(seq)
                     if nev >= 1 and a is not None:
                         if seq_name == "TEVN":
-                            # a[1, -1] = TQM
                             if a.shape[0] >= 2 and np.isfinite(a[1, -1]):
                                 seq_ok = True
                                 break
                         else:  # WEVN
-                            # a[2, -1] = WQM
                             if a.shape[0] >= 3 and np.isfinite(a[2, -1]):
                                 seq_ok = True
                                 break
-
-                # Se ainda não ok, aceita PEVN/ZEVN/QEVN (só presença de evento)
+                # fallback: PEVN/ZEVN/QEVN
                 if not seq_ok:
                     for seq_name in ("PEVN", "ZEVN", "QEVN"):
                         seq = _read1(read, seq_name)
@@ -527,45 +531,50 @@ def check_file(
                             break
 
                 if not seq_ok:
-                    no_events += 1
-                    inc(per_type_no_events, mtyp)
                     subset_no_events = True
+                    diag_no_events += 1
+                    inc(per_type_no_events, mtyp)
                     if where_max and len(where_events) < where_max:
-                        where_events.append(_fmt_where(mtyp, nsub, xob, yob, dhr_dbg))
+                        where_events.append(_fmt_where(mtyp, nsub, xob, yob, dhr))
                     fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_EVENTS, None))
 
-                # ---- Unidades/valores plausíveis
+                # 2.2. Janela de tempo
+                subset_time_oow = False
+                if _is_missing(dhr) or not (-twind_h <= dhr <= twind_h):
+                    subset_time_oow = True
+                    diag_time_oow += 1
+                    inc(per_type_time_oow, mtyp)
+                    if where_max and len(where_time) < where_max:
+                        where_time.append(_fmt_where(mtyp, nsub, xob, yob, dhr))
+                    fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_TIME, None))
+
+                # 2.3. Unidades / valores plausíveis
                 subset_bad_units = False
 
                 def check_range(name: str) -> bool:
-                    """Valida um mnemônico escalar existente contra RANGE[name]."""
                     a = _read_scalar(read, name)
-                    lo, hi = RANGE[name]
-                    # Pressões precisam de conversão para hPa antes de validar
                     if name in ("POB", "PRSS") and a is not None:
                         a = a * pscale
+                    lo, hi = RANGE[name]
                     return _in_range(a, lo, hi)
 
-                # testa cada variável presente; registra **todas** que falharem
                 for nm in ("XOB", "YOB", "TOB", "POB", "ZOB", "UOB", "VOB", "QOB"):
                     arr = _read1(read, nm)
-                    if arr is not None:
+                    if arr is not None and nm in RANGE:
                         if not check_range(nm):
                             subset_bad_units = True
                             units_by_var_and_type[(_b2s(mtyp), nm)] += 1
                             if where_max and len(where_units) < where_max:
-                                where_units.append(_fmt_where(mtyp, nsub, xob, yob, dhr_dbg, extra=f" var={nm}"))
+                                where_units.append(_fmt_where(mtyp, nsub, xob, yob, dhr, extra=f" var={nm}"))
                             fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_UNITS, nm))
-                            # (não faz break; queremos registrar todas as variáveis fora de faixa)
 
                 if subset_bad_units:
-                    bad_units += 1
+                    diag_bad_units += 1
                     inc(per_type_bad_units, mtyp)
 
-                # ---- Erros de observação (opcional)
+                # 2.4. Erros de observação (diagnóstico)
                 subset_miss_oberrs = False
                 if check_oberrs:
-                    # Para cada variável presente, exige o erro correspondente
                     pairs = [
                         ("TOB", "TOE"),
                         (("UOB", "VOB"), "WOE"),
@@ -581,51 +590,38 @@ def check_file(
                         if present and _read1(read, err) is None:
                             subset_miss_oberrs = True
                             break
-
                     if subset_miss_oberrs:
-                        miss_oberrs += 1
+                        diag_miss_oberrs += 1
                         inc(per_type_miss_oberrs, mtyp)
                         fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_OBERRS, None))
 
-                # ---- ADPSFC: PRSS/PWO/CAT (opcional por --kind)
+                # 2.5. ADPSFC (diagnóstico, se --kind adpsfc)
                 subset_miss_adpsfc = False
                 if kind == "adpsfc":
-                    # Requer PRSS/PWO/CAT quando o subset é “significativo”
-                    need_check = not (subset_bad_hdr or subset_no_events)
-                    if need_check:
+                    if not subset_gsi_hdr_bad:  # só olha ADPSFC se header básico ok
                         prss = _read1(read, "PRSS")
                         pwo = _read1(read, "PWO")
                         cat = _read1(read, "CAT")
                         if (prss is None) or (pwo is None) or (cat is None):
                             subset_miss_adpsfc = True
                         else:
-                            # valida ranges se presentes
-                            # PRSS pode não estar em hPa → converte
                             try:
                                 prss_hpa = float(prss.flat[0]) * pscale
                             except Exception:
                                 prss_hpa = None
                             if not _in_range(prss_hpa, *RANGE["PRSS"]):
                                 subset_miss_adpsfc = True
-                            if not _in_range(float(pwo.flat[0]), *RANGE["PWO"]):
+                            try:
+                                pwo_val = float(pwo.flat[0])
+                            except Exception:
+                                pwo_val = None
+                            if not _in_range(pwo_val, *RANGE["PWO"]):
                                 subset_miss_adpsfc = True
 
                         if subset_miss_adpsfc:
-                            miss_adpsfc += 1
+                            diag_miss_adpsfc += 1
                             inc(per_type_miss_adpsfc, mtyp)
                             fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_ADPSFC, None))
-
-                # ---- Aprovação do subset
-                approved = not any([
-                    subset_bad_hdr,
-                    subset_no_events,
-                    subset_time_oow,
-                    subset_bad_units,
-                    subset_miss_oberrs,
-                    subset_miss_adpsfc,
-                ])
-                if approved:
-                    inc(per_type_approved, mtyp)
 
     finally:
         try:
@@ -634,70 +630,103 @@ def check_file(
             if pbar is not None:
                 pbar.close()
 
-    # Determina o status geral
-    status = "PASSOU" if all(x == 0 for x in (
-        bad_hdr, no_events, time_oow, bad_units,
-        (miss_oberrs if check_oberrs else 0),
-        (miss_adpsfc if (kind == "adpsfc") else 0),
-    )) else "ATENÇÃO"
+    # Status estrutural (mínimo GSI)
+    if gsi_bad_hdr == 0 and gsi_bad_lonlat == 0 and gsi_no_useful == 0:
+        status_struct = "OK"
+    else:
+        status_struct = "PROBLEMAS_ESTRUTURAIS"
+
+    # Status diagnóstico: ATENÇÃO se houver qualquer contador > 0
+    if any([
+        diag_no_events,
+        diag_time_oow,
+        diag_bad_units,
+        diag_miss_oberrs,
+        diag_miss_adpsfc,
+    ]):
+        status_diag = "ATENÇÃO"
+    else:
+        status_diag = "OK"
 
     summary = Summary(
         nmsg=nmsg,
         nsub=nsub,
-        bad_hdr=bad_hdr,
-        no_events=no_events,
-        time_oow=time_oow,
-        bad_units=bad_units,
-        miss_oberrs=miss_oberrs,
-        miss_adpsfc=miss_adpsfc,
-        types=types,
+        gsi_bad_hdr=gsi_bad_hdr,
+        gsi_bad_lonlat=gsi_bad_lonlat,
+        gsi_no_useful=gsi_no_useful,
         per_type_total=per_type_total,
-        per_type_approved=per_type_approved,
-        per_type_bad_hdr=per_type_bad_hdr,
+        per_type_gsi_bad_hdr=per_type_gsi_bad_hdr,
+        per_type_gsi_bad_lonlat=per_type_gsi_bad_lonlat,
+        per_type_gsi_no_useful=per_type_gsi_no_useful,
+        per_type_gsi_approved=per_type_gsi_approved,
+        diag_no_events=diag_no_events,
+        diag_time_oow=diag_time_oow,
+        diag_bad_units=diag_bad_units,
+        diag_miss_oberrs=diag_miss_oberrs,
+        diag_miss_adpsfc=diag_miss_adpsfc,
         per_type_no_events=per_type_no_events,
         per_type_time_oow=per_type_time_oow,
         per_type_bad_units=per_type_bad_units,
         per_type_miss_oberrs=per_type_miss_oberrs,
         per_type_miss_adpsfc=per_type_miss_adpsfc,
-        status=status,
+        status_struct=status_struct,
+        status_diag=status_diag,
         pressure_unit_used=pressure_unit_used,
-        where_hdr=where_hdr,
+        where_gsi_hdr=where_gsi_hdr,
+        where_gsi_lonlat=where_gsi_lonlat,
+        where_gsi_no_useful=where_gsi_no_useful,
         where_events=where_events,
         where_time=where_time,
         where_units=where_units,
         fail_records=fail_records,
     )
 
-    # CSVs (opcionais)
     if csv_out:
-        _write_csv(csv_out, summary)
+        _write_csv(csv_out, path, summary)
     if report_csv:
-        _write_report_csv(report_csv, path, pressure_unit_used, summary)
+        _write_report_csv(report_csv, path, summary)
     if vars_csv:
         _write_vars_csv(vars_csv, summary, units_by_var_and_type)
 
     return summary
 
-# --------------------------------- CSV ----------------------------------------
 
-def _write_csv(path: str, s: Summary) -> None:
-    """Escreve um CSV por ``msg_type`` com totais, aprovados, % aprovado e contadores de falhas."""
+# -----------------------------------------------------------------------------
+# CSVs
+# -----------------------------------------------------------------------------
+
+def _write_csv(path: str, src: str, s: Summary) -> None:
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow([
-            "msg_type", "total", "approved", "approved_pct",
-            "bad_hdr", "no_events", "time_oow", "bad_units",
-            "missing_oberrs", "missing_adpsfc_fields"
+            "src_file",
+            "msg_type",
+            "total",
+            "gsi_approved",
+            "gsi_approved_pct",
+            "gsi_bad_hdr",
+            "gsi_bad_lonlat",
+            "gsi_no_useful",
+            "diag_no_events",
+            "diag_time_oow",
+            "diag_bad_units",
+            "diag_missing_oberrs",
+            "diag_missing_adpsfc_fields",
         ])
-        # A ordenação abaixo mantém bytes primeiro, depois strings, de forma estável
         for k in sorted(s.per_type_total.keys(), key=lambda x: (isinstance(x, bytes), x)):
-            mt = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
+            mt = _b2s(k)
             tot = s.per_type_total.get(k, 0)
-            app = s.per_type_approved.get(k, 0)
+            app = s.per_type_gsi_approved.get(k, 0)
             pct = (100.0 * app / tot) if tot > 0 else 0.0
             w.writerow([
-                mt, tot, app, f"{pct:.2f}",
-                s.per_type_bad_hdr.get(k, 0),
+                src,
+                mt,
+                tot,
+                app,
+                f"{pct:.2f}",
+                s.per_type_gsi_bad_hdr.get(k, 0),
+                s.per_type_gsi_bad_lonlat.get(k, 0),
+                s.per_type_gsi_no_useful.get(k, 0),
                 s.per_type_no_events.get(k, 0),
                 s.per_type_time_oow.get(k, 0),
                 s.per_type_bad_units.get(k, 0),
@@ -705,64 +734,53 @@ def _write_csv(path: str, s: Summary) -> None:
                 s.per_type_miss_adpsfc.get(k, 0),
             ])
 
-def _write_report_csv(path: str, src_path: str, press_unit: str, s: Summary) -> None:
-    """CSV detalhado com **todas** as falhas detectadas.
-       Colunas: src_file, pressure_unit, msg_type, subset_idx, fail_type, var
-    """
+
+def _write_report_csv(path: str, src: str, s: Summary) -> None:
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["src_file", "pressure_unit", "msg_type", "subset_idx", "fail_type", "var"])
+        w.writerow(["src_file", "msg_type", "subset_idx", "fail_type", "var"])
         for rec in s.fail_records:
-            w.writerow([src_path, press_unit, rec.msg_type, rec.subset_idx, rec.fail_type, (rec.var or "")])
+            w.writerow([src, rec.msg_type, rec.subset_idx, rec.fail_type, rec.var or ""])
+
 
 def _write_vars_csv(path: str, s: Summary, counter: dict) -> None:
-    """CSV agregado: contagem de falhas de unidade por `msg_type` e variável."""
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["msg_type", "var", "bad_units_count"])
-        # counter: (msg_type, var) -> count
         for (mt, var), cnt in sorted(counter.items()):
             w.writerow([mt, var, cnt])
 
-# --------------------------------- CLI ----------------------------------------
 
-def _fmt_types(types: Dict[object, int]) -> str:
-    """Formata inventário por ``msg_type`` em linhas legíveis."""
-    lines = []
-    for k, v in sorted(types.items(), key=lambda kv: kv[0]):
-        k_disp = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
-        lines.append(f" - {k_disp}: {v} subsets")
-    return "\n".join(lines)
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Constrói o parser de argumentos da linha de comando."""
     p = argparse.ArgumentParser(
         prog="check_prepbufr.py",
         description=(
-            "Checagens estruturais e de plausibilidade em PREPBUFR: "
-            "header, eventos finais, janela de tempo, faixas/unidades, "
-            "erros de observação e campos ADPSFC. Pode gerar CSV por msg_type, "
-            "CSV detalhado de falhas e CSV agregado por variável."
+            "Validação estrutural mínima (GSI) + diagnósticos de eventos, tempo, "
+            "unidades, erros de observação e ADPSFC em arquivos PREPBUFR."
         ),
     )
-    p.add_argument("file", help="Caminho do PREPBUFR")
+    p.add_argument("file", help="Caminho do arquivo PREPBUFR")
     p.add_argument(
         "--twind",
         type=float,
         default=DEFAULT_TWIND_H,
         metavar="HOURS",
-        help=f"Meia-largura da janela |DHR| (padrão: ±{DEFAULT_TWIND_H} h).",
+        help=f"Meia-largura da janela |DHR| (diagnóstico, padrão: ±{DEFAULT_TWIND_H} h).",
     )
     p.add_argument(
         "--quiet",
         action="store_true",
-        help="Oculta saída humana; usa apenas o código de saída.",
+        help="Oculta saída legível; usa apenas o código de saída.",
     )
     p.add_argument(
         "--progress",
         choices=("off", "counter", "bar"),
         default="counter",
-        help="Tipo de progresso: off | counter | bar (precisa do pacote tqdm).",
+        help="Tipo de progresso: off | counter | bar (precisa de tqdm para 'bar').",
     )
     p.add_argument(
         "--progress-every",
@@ -771,61 +789,67 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="(counter) imprime a cada N subsets (0 desliga).",
     )
-    # Novos parâmetros
     p.add_argument(
         "--check-oberrs",
         action="store_true",
-        help="Exige erros de observação (TOE/WOE/POE/ZOE/QOE) quando a variável está presente.",
-    )
-    p.add_argument(
-        "--kind",
-        choices=("adpsfc", "adpupa"),
-        help="Checagens específicas por tipo lógico. Em 'adpsfc' confere PRSS/PWO/CAT.",
+        help=(
+            "Diagnóstico: verifica se existem erros de observação (TOE/WOE/POE/ZOE/QOE) "
+            "quando as variáveis correspondentes estão presentes."
+        ),
     )
     p.add_argument(
         "--pressure-unit",
         choices=PRESSURE_UNITS,
         default=DEFAULT_PRESSURE_UNIT,
-        help=(
-            "Unidade de pressão no arquivo: hpa (padrão), cb, pa ou auto. "
-            "Usada para validar POB/PRSS com ranges base em hPa."
-        ),
+        help="Unidade de pressão para POB/PRSS: hpa | cb | pa | auto.",
     )
     p.add_argument(
         "--where",
         type=int,
         default=0,
         metavar="N",
-        help="Imprime até N exemplos 'onde' por tipo de falha (header/eventos/tempo/unidades).",
-    )
-    p.add_argument(
-        "--report-csv",
-        help="CSV detalhado com todas as falhas (msg_type, subset_idx, tipo, var).",
-    )
-    p.add_argument(
-        "--vars-csv",
-        help="CSV agregado com contagem de falhas de unidade por variável e msg_type.",
+        help="Imprime até N exemplos por tipo de problema estrutural/diagnóstico. (0 desliga)",
     )
     p.add_argument(
         "--csv",
-        help="Escreve relatório CSV por msg_type (caminho do arquivo).",
+        dest="csv_out",
+        metavar="FILE",
+        help="Escreve CSV agregado por msg_type com totais, aprovados (GSI) e contadores de falhas.",
+    )
+    p.add_argument(
+        "--report-csv",
+        metavar="FILE",
+        help="Escreve CSV detalhado com 1 linha por falha (estrutural + diagnóstica).",
+    )
+    p.add_argument(
+        "--vars-csv",
+        metavar="FILE",
+        help="Escreve CSV com contagem de falhas de unidade (bad_units) por msg_type/var.",
+    )
+    p.add_argument(
+        "--kind",
+        choices=("adpsfc",),
+        help="Ativa diagnósticos específicos para ADPSFC (PRSS/PWO/CAT).",
     )
     return p
 
+
+def _fmt_types(per_type_total: Dict[object, int]) -> str:
+    lines = []
+    for k in sorted(per_type_total.keys(), key=lambda x: (isinstance(x, bytes), x)):
+        mt = _b2s(k)
+        lines.append(f" - {mt}: {per_type_total[k]} subsets")
+    return "\n".join(lines)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
-    """Ponto de entrada do script (CLI).
+    parser = _build_parser()
+    args = parser.parse_args(argv)
 
-    Lê os argumentos, executa as checagens e imprime o resumo.
-    O código de retorno é 0 se o status geral for *PASSOU*; caso contrário 1.
-    """
-    args = _build_parser().parse_args(argv)
-    # Se quiet, suprime progresso
-    progress = "off" if args.quiet else args.progress
-
-    res = check_file(
+    summary = check_file(
         args.file,
         twind_h=args.twind,
-        progress=progress,
+        progress=args.progress,
         progress_every=args.progress_every,
         quiet=args.quiet,
         check_oberrs=args.check_oberrs,
@@ -834,49 +858,68 @@ def main(argv: Optional[list[str]] = None) -> int:
         report_csv=args.report_csv,
         vars_csv=args.vars_csv,
         kind=args.kind,
-        csv_out=args.csv,
+        csv_out=args.csv_out,
     )
 
     if not args.quiet:
         print(f"Arquivo: {args.file}")
-        print(f"Unidade de pressão adotada: {res.pressure_unit_used}")
-        print(f"Mensagens: {res.nmsg}  |  Subsets: {res.nsub}")
-        print(_fmt_types(res.types))
-        print("\nResumo:")
-        print(f"  Header(s) incompleto(s): {res.bad_hdr}")
-        print(f"  Subsets sem eventos finais (TEVN/WEVN/etc.): {res.no_events}")
-        print(f"  Subsets fora da janela de tempo (±{args.twind}h): {res.time_oow}")
-        print(f"  Subsets com unidades/valores implausíveis: {res.bad_units}")
-        if args.check_oberrs:
-            print(f"  Subsets faltando erros de observação: {res.miss_oberrs}")
-        if args.kind == "adpsfc":
-            print(f"  Subsets ADPSFC sem PRSS/PWO/CAT (ou fora de faixa): {res.miss_adpsfc}")
+        print(f"Unidade de pressão adotada: {summary.pressure_unit_used}")
+        print(f"Mensagens: {summary.nmsg:,}  |  Subsets: {summary.nsub:,}")
+        if summary.per_type_total:
+            print(_fmt_types(summary.per_type_total))
 
-        # Onde (exemplos)
-        if args.where:
-            if res.where_hdr:
-                print("\nOnde (header incompleto):")
-                for line in res.where_hdr: print(line)
-            if res.where_events:
-                print("\nOnde (sem eventos finais):")
-                for line in res.where_events: print(line)
-            if res.where_time:
-                print("\nOnde (fora da janela de tempo):")
-                for line in res.where_time: print(line)
-            if res.where_units:
-                print("\nOnde (unidades/valores implausíveis):")
-                for line in res.where_units: print(line)
+        # Resumo estrutural
+        print("\nResumo estrutural (mínimo GSI):")
+        print(f"  Subsets com header essencial faltando (XOB/YOB/DHR/TYP): {summary.gsi_bad_hdr:,}")
+        print(f"  Subsets com lon/lat claramente inválidos: {summary.gsi_bad_lonlat:,}")
+        print(f"  Subsets sem NENHUMA variável 'útil' (TOB/QOB/U/V/POB/ZOB/PRSS): {summary.gsi_no_useful:,}")
+
+        # Resumo diagnóstico
+        print("\nResumo diagnóstico (não afetam leitura pelo GSI):")
+        print(f"  Subsets sem eventos finais (TEVN/WEVN/PEVN/ZEVN/QEVN): {summary.diag_no_events:,}")
+        print(f"  Subsets fora da janela de tempo (±{args.twind:.1f}h): {summary.diag_time_oow:,}")
+        print(f"  Subsets com unidades/valores implausíveis: {summary.diag_bad_units:,}")
+        if args.check_oberrs:
+            print(f"  Subsets faltando erros de observação: {summary.diag_miss_oberrs:,}")
+        if args.kind == "adpsfc":
+            print(f"  Subsets ADPSFC com problemas em PRSS/PWO/CAT: {summary.diag_miss_adpsfc:,}")
+
+        # Onde (estrutural)
+        if args.where and summary.where_gsi_hdr:
+            print("\nOnde (header essencial faltando):")
+            print("\n".join(summary.where_gsi_hdr))
+        if args.where and summary.where_gsi_lonlat:
+            print("\nOnde (lon/lat claramente inválidos):")
+            print("\n".join(summary.where_gsi_lonlat))
+        if args.where and summary.where_gsi_no_useful:
+            print("\nOnde (sem variáveis úteis TOB/QOB/U/V/POB/ZOB/PRSS):")
+            print("\n".join(summary.where_gsi_no_useful))
+
+        # Onde (diagnóstico)
+        if args.where and summary.where_events:
+            print("\nOnde (sem eventos finais):")
+            print("\n".join(summary.where_events))
+        if args.where and summary.where_time:
+            print("\nOnde (fora da janela de tempo):")
+            print("\n".join(summary.where_time))
+        if args.where and summary.where_units:
+            print("\nOnde (unidades/valores implausíveis):")
+            print("\n".join(summary.where_units))
 
         if args.report_csv:
             print(f"\nCSV detalhado de falhas: {args.report_csv}")
         if args.vars_csv:
             print(f"CSV agregado (falhas de unidade por variável): {args.vars_csv}")
-        if args.csv:
-            print(f"CSV (por msg_type) escrito em: {args.csv}")
-        print(f"\nStatus: {res.status}")
+        if args.csv_out:
+            print(f"CSV (por msg_type) escrito em: {args.csv_out}")
 
-    return 0 if res.status == "PASSOU" else 1
+        print(f"\nStatus estrutural (GSI): {summary.status_struct}")
+        print(f"Status diagnóstico: {summary.status_diag}")
+
+    # código de saída = 0 se estrutural OK (mínimo GSI), 1 se há problemas estruturais
+    return 0 if summary.status_struct == "OK" else 1
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
 
