@@ -111,7 +111,10 @@ LON_RANGE_STRUCT = (-180.0, 360.0)
 LAT_RANGE_STRUCT = (-90.0, 90.0)
 
 # Missing típico da BUFRLIB
-BUFR_MISSING = 1.0e10
+try:
+    BUFR_MISSING = float(ncepbufr.bufrlib.getbmiss())
+except Exception:
+    BUFR_MISSING = 1.0e10
 
 # Tipos de falha (para report-csv)
 FAIL_GSI_HDR = "gsi_bad_header"
@@ -553,6 +556,10 @@ def check_file(
 
                 def check_range(name: str) -> bool:
                     a = _read_scalar(read, name)
+                    
+                    # Missing não é erro de unidade
+                    if _is_missing(a):
+                        return True
                     if name in ("POB", "PRSS") and a is not None:
                         a = a * pscale
                     lo, hi = RANGE[name]
