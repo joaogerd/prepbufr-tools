@@ -67,7 +67,8 @@ import ncepbufr  # conda-forge: nceplibs-bufr
 # -----------------------------------------------------------------------------
 
 # Header mínimo para o GSI
-REQ_HDR_GSI: Tuple[str, ...] = ("XOB", "YOB", "DHR", "TYP")
+# GSI REAL exige apenas posição e tempo
+REQ_HDR_GSI: Tuple[str, ...] = ("XOB", "YOB", "DHR")
 
 # Sequências Table D para eventos (diagnóstico)
 REQ_SEQS: Tuple[str, ...] = ("TEVN", "WEVN", "PEVN", "ZEVN", "QEVN")
@@ -78,23 +79,41 @@ DEFAULT_TWIND_H: float = 3.0
 # Progresso
 DEFAULT_PROGRESS_EVERY: int = 10_000
 
-# Faixas de plausibilidade (diagnóstico)
+# Faixas de plausibilidade baseadas estritamente na tabela PREPBUFR
+
 RANGE = {
-    "XOB": (-180.0, 180.0),
-    "YOB": (-90.0, 90.0),
-    "TOB": (180.0, 340.0),
-    "POB": (1.0, 1100.0),
-    "ZOB": (-500.0, 40000.0),
-    "UOB": (-120.0, 120.0),
-    "VOB": (-120.0, 120.0),
-    "QOB": (0.0, 0.05),
-    "PRSS": (500.0, 1085.0),
-    "PWO": (0.0, 100.0),
-    "DHR": (-6.0, 6.0),
-    "HOVI": (0.0, 100000.0),
-    "TDO": (173.0, 333.0),
-    "MSST": (271.0, 313.0),
+    # Geolocalização
+    "XOB": (-180.0, 180.0),          # DEG E
+    "YOB": (-90.0, 90.0),            # DEG N
+
+    # Tempo
+    "DHR": (-24.0, 24.0),            # HOURS (tabela permite até ±24h)
+
+    # Temperatura (DEG C)
+    "TOB": (-90.0, 60.0),            # Atmosfera (°C)
+    "TDO": (-100.0, 40.0),           # Ponto de orvalho (°C)
+
+    # Temperatura de superfície (K)
+    "TMSK": (200.0, 350.0),          # K (compatível com tabela)
+
+    # Pressão
+    "POB": (1.0, 1100.0),             # mb
+    "PRSS": (50000.0, 108500.0),      # Pa (ATENÇÃO: Pascals!)
+
+    # Altura
+    "ZOB": (-500.0, 40000.0),         # m (ref = -1000 m)
+
+    # Vento
+    "UOB": (-150.0, 150.0),           # m/s
+    "VOB": (-150.0, 150.0),           # m/s
+
+    # Umidade específica
+    "QOB": (0.0, 30000.0),            # mg/kg (0–30 g/kg)
+
+    # Água precipitável
+    "PWO": (0.0, 120.0),              # mm (valores extremos tropicais)
 }
+
 
 # Unidade de pressão (para interpretar POB/PRSS) e autodetecção
 PRESSURE_UNITS = ("hpa", "cb", "pa", "auto")
@@ -107,8 +126,28 @@ PRESSURE_AUTODETECT_THRESH = (
 )
 
 # Limites estruturais para lon/lat (mínimo GSI)
+# GSI aceita lon 0–360 e normaliza internamente
 LON_RANGE_STRUCT = (-180.0, 360.0)
 LAT_RANGE_STRUCT = (-90.0, 90.0)
+
+# Variáveis assimiláveis por tipo de mensagem (Tabela A / comportamento GSI)
+USEFUL_BY_TYPE = {
+    "ADPUPA": ("TOB", "QOB", "UOB", "VOB", "ZOB"),
+    "AIRCAR": ("TOB", "UOB", "VOB"),
+    "AIRCFT": ("TOB", "UOB", "VOB"),
+    "SATWND": ("UOB", "VOB"),
+    "PROFLR": ("UOB", "VOB"),
+    "VADWND": ("UOB", "VOB"),
+    "ADPSFC": ("PRSS", "TOB", "QOB", "UOB", "VOB"),
+    "SFCSHP": ("PRSS", "TOB", "QOB", "UOB", "VOB"),
+    # BUOY: GSI aceita só vento, só pressão ou só temperatura
+    "SFCSHP": ("PRSS", "TOB", "QOB", "UOB", "VOB", "POB"),
+    "SATEMP": ("TMBR",),
+    "GOESND": ("TMBR",),
+    "SPSSMI": ("PWO", "UOB", "VOB"),
+    "QKSWND": ("UOB", "VOB"),
+}
+
 
 # Missing típico da BUFRLIB
 try:
@@ -299,7 +338,7 @@ def _autodetect_pressure_unit(path: str, max_samples: int = PRESSURE_AUTODETECT_
         cnt = 0
         while b.advance() == 0 and cnt < max_samples:
             while b.load_subset() == 0 and cnt < max_samples:
-                for nm in ("POB", "PRSS"):
+                for nm in ("POB",):
                     arr = b.read_subset(nm)
                     if getattr(arr, "size", 0):
                         try:
@@ -477,8 +516,8 @@ def check_file(
                             where_gsi_lonlat.append(_fmt_where(mtyp, nsub, xob, yob, dhr))
                         fail_records.append(FailRecord(_b2s(mtyp), nsub, FAIL_GSI_LONLAT, None))
 
-                # Pelo menos uma variável "útil" (TOB/QOB/U/V/POB/ZOB/PRSS)
-                useful_mnems = ("TOB", "QOB", "UOB", "VOB", "POB", "ZOB", "PRSS")
+                # Pelo menos uma variável "útil" (dirigido por tipo)
+                useful_mnems = USEFUL_BY_TYPE.get(_b2s(mtyp), ())
                 has_useful = False
                 for nm in useful_mnems:
                     arr = _read1(read, nm)
@@ -508,6 +547,7 @@ def check_file(
                 # -------------------------------
 
                 # 2.1. Eventos
+                # NOTA: Eventos EVN são opcionais no GSI real → ignorados
                 seq_ok = False
                 subset_no_events = False
 
@@ -583,6 +623,7 @@ def check_file(
                 subset_miss_oberrs = False
                 if check_oberrs:
                     pairs = [
+                        # *_OE são opcionais no GSI (erro default)
                         ("TOB", "TOE"),
                         (("UOB", "VOB"), "WOE"),
                         ("POB", "POE"),
@@ -604,12 +645,12 @@ def check_file(
 
                 # 2.5. ADPSFC (diagnóstico, se --kind adpsfc)
                 subset_miss_adpsfc = False
-                if kind == "adpsfc":
+                # Diagnóstico ADPSFC só se msg_type == ADPSFC
+                if kind == "adpsfc" and _b2s(mtyp) == "ADPSFC":
                     if not subset_gsi_hdr_bad:  # só olha ADPSFC se header básico ok
                         prss = _read1(read, "PRSS")
                         pwo = _read1(read, "PWO")
-                        cat = _read1(read, "CAT")
-                        if (prss is None) or (pwo is None) or (cat is None):
+                        if (prss is None) or (pwo is None):
                             subset_miss_adpsfc = True
                         else:
                             try:
@@ -637,54 +678,174 @@ def check_file(
             if pbar is not None:
                 pbar.close()
 
+    # -------------------------------------------------------------------------
     # Status estrutural (mínimo GSI)
+    #
+    # Objetivo:
+    #   Determinar se o arquivo PREPBUFR é ESTRUTURALMENTE UTILIZÁVEL pelo GSI,
+    #   isto é, se o GSI consegue LER, INTERPRETAR e TENTAR ASSIMILAR os dados.
+    #
+    # Critérios adotados (estritamente alinhados ao GSI real):
+    #
+    #   - gsi_bad_hdr:
+    #       Subsets sem header essencial (XOB, YOB, DHR, TYP).
+    #       -> Sem essas chaves, o GSI NÃO consegue sequer posicionar a observação.
+    #
+    #   - gsi_bad_lonlat:
+    #       Longitude ou latitude claramente inválidas.
+    #       -> O GSI rejeita observações fora de limites geográficos básicos.
+    #
+    #   - gsi_no_useful:
+    #       Subsets sem NENHUMA variável potencialmente assimilável
+    #       (TOB, QOB, UOB, VOB, POB, ZOB ou PRSS).
+    #       -> Observação sem conteúdo útil não entra no sistema.
+    #
+    # Regra:
+    #   - status_struct = "OK"
+    #       TODOS os critérios acima são satisfeitos para TODOS os subsets.
+    #
+    #   - status_struct = "PROBLEMAS_ESTRUTURAIS"
+    #       Pelo menos um subset falhou em algum critério estrutural.
+    #
+    # Observação importante:
+    #   Este status define o código de saída do programa:
+    #     - 0 → OK (arquivo utilizável pelo GSI)
+    #     - 1 → PROBLEMAS_ESTRUTURAIS (arquivo inadequado para o GSI)
+    # -------------------------------------------------------------------------
     if gsi_bad_hdr == 0 and gsi_bad_lonlat == 0 and gsi_no_useful == 0:
         status_struct = "OK"
     else:
         status_struct = "PROBLEMAS_ESTRUTURAIS"
 
-    # Status diagnóstico: ATENÇÃO se houver qualquer contador > 0
+    # -------------------------------------------------------------------------
+    # Status diagnóstico
+    #
+    # Objetivo:
+    #   Elevar status_diag para "ATENÇÃO" apenas quando houver condições
+    #   que possam causar REJEIÇÃO da observação ou IMPACTO OPERACIONAL REAL
+    #   no GSI.
+    #
+    # Princípios adotados (alinhados ao comportamento do GSI):
+    #
+    #   - diag_no_events:
+    #       -> EVN ausente (TEVN/WEVN/PEVN/ZEVN/QEVN)
+    #       -> NÃO eleva status.
+    #       -> O GSI não exige eventos para leitura ou assimilação.
+    #
+    #   - diag_miss_oberrs:
+    #       -> Erros de observação ausentes (*_OE)
+    #       -> NÃO eleva status.
+    #       -> O GSI utiliza erros default definidos em convinfo.
+    #
+    #   - diag_time_oow:
+    #       -> DHR fora da janela temporal
+    #       -> ELEVA status (ATENÇÃO).
+    #       -> Observações fora da janela podem ser descartadas pelo GSI.
+    #
+    #   - diag_bad_units:
+    #       -> Valores ou unidades fisicamente implausíveis
+    #       -> ELEVA status (ATENÇÃO).
+    #       -> Podem causar rejeição posterior ou contaminar a análise.
+    #
+    #   - diag_miss_adpsfc:
+    #       -> Inconsistência em campos críticos de superfície (PRSS/PWO/CAT)
+    #       -> ELEVA status (ATENÇÃO).
+    #       -> PRSS é essencial para observações de superfície no GSI.
+    #
+    # Resultado:
+    #   - status_diag = "OK"
+    #       Nenhuma condição com impacto real detectada (diagnóstico informativo).
+    #   - status_diag = "ATENÇÃO"
+    #       Existe pelo menos uma condição com potencial impacto na assimilação.
+    # -------------------------------------------------------------------------
     if any([
-        diag_no_events,
-        diag_time_oow,
-        diag_bad_units,
-        diag_miss_oberrs,
-        diag_miss_adpsfc,
+        diag_time_oow,       # DHR fora da janela temporal
+        diag_bad_units,      # valores/unidades fisicamente implausíveis
+        diag_miss_adpsfc,    # campos críticos ausentes para ADPSFC
     ]):
         status_diag = "ATENÇÃO"
     else:
         status_diag = "OK"
 
+    # -------------------------------------------------------------------------
+    # Consolidação do resumo final da validação
+    #
+    # O objeto Summary concentra:
+    #   - métricas estruturais mínimas (relevantes ao GSI)
+    #   - métricas diagnósticas (informativas e/ou de ATENÇÃO)
+    #   - status final (estrutural e diagnóstico)
+    #   - amostras "onde" ocorreram os problemas
+    #   - registros detalhados de falhas (para CSV detalhado)
+    # -------------------------------------------------------------------------
     summary = Summary(
-        nmsg=nmsg,
-        nsub=nsub,
-        gsi_bad_hdr=gsi_bad_hdr,
-        gsi_bad_lonlat=gsi_bad_lonlat,
-        gsi_no_useful=gsi_no_useful,
-        per_type_total=per_type_total,
-        per_type_gsi_bad_hdr=per_type_gsi_bad_hdr,
-        per_type_gsi_bad_lonlat=per_type_gsi_bad_lonlat,
-        per_type_gsi_no_useful=per_type_gsi_no_useful,
-        per_type_gsi_approved=per_type_gsi_approved,
-        diag_no_events=diag_no_events,
-        diag_time_oow=diag_time_oow,
-        diag_bad_units=diag_bad_units,
-        diag_miss_oberrs=diag_miss_oberrs,
-        diag_miss_adpsfc=diag_miss_adpsfc,
+        # ---------------------------------------------------------------------
+        # Totais globais
+        # ---------------------------------------------------------------------
+        nmsg=nmsg,                  # número total de mensagens BUFR no arquivo
+        nsub=nsub,                  # número total de subsets processados
+    
+        # ---------------------------------------------------------------------
+        # Métricas estruturais (mínimo GSI)
+        # Estas métricas indicam se o GSI CONSEGUE ler e usar o PREPBUFR.
+        # Qualquer uma delas diferente de zero implica status_struct != OK.
+        # ---------------------------------------------------------------------
+        gsi_bad_hdr=gsi_bad_hdr,    # subsets sem header essencial (XOB/YOB/DHR/TYP)
+        gsi_bad_lonlat=gsi_bad_lonlat,  # lon/lat claramente inválidos (checagem grosseira)
+        gsi_no_useful=gsi_no_useful,    # subsets sem NENHUMA variável assimilável
+    
+        # ---------------------------------------------------------------------
+        # Contadores por tipo de mensagem (msg_type)
+        # Permitem avaliar qualidade e cobertura por tipo (ADPSFC, SFCSHP, etc.)
+        # ---------------------------------------------------------------------
+        per_type_total=per_type_total,                      # total de subsets por msg_type
+        per_type_gsi_bad_hdr=per_type_gsi_bad_hdr,          # header inválido por msg_type
+        per_type_gsi_bad_lonlat=per_type_gsi_bad_lonlat,    # lon/lat inválido por msg_type
+        per_type_gsi_no_useful=per_type_gsi_no_useful,      # sem variáveis úteis por msg_type
+        per_type_gsi_approved=per_type_gsi_approved,        # subsets estruturalmente OK (GSI)
+    
+        # ---------------------------------------------------------------------
+        # Métricas diagnósticas (não impedem leitura pelo GSI)
+        # Servem para QA/QC, debug e avaliação da cadeia de produção.
+        # ---------------------------------------------------------------------
+        diag_no_events=diag_no_events,           # EVN ausente (TEVN/WEVN/PEVN/ZEVN/QEVN)
+        diag_time_oow=diag_time_oow,             # DHR fora da janela temporal
+        diag_bad_units=diag_bad_units,           # valores/unidades fisicamente implausíveis
+        diag_miss_oberrs=diag_miss_oberrs,       # erros de observação (*_OE) ausentes
+        diag_miss_adpsfc=diag_miss_adpsfc,       # inconsistência em PRSS/PWO/CAT (superfície)
+    
+        # ---------------------------------------------------------------------
+        # Métricas diagnósticas por tipo de mensagem
+        # Úteis para identificar problemas sistemáticos por origem/tipo.
+        # ---------------------------------------------------------------------
         per_type_no_events=per_type_no_events,
         per_type_time_oow=per_type_time_oow,
         per_type_bad_units=per_type_bad_units,
         per_type_miss_oberrs=per_type_miss_oberrs,
         per_type_miss_adpsfc=per_type_miss_adpsfc,
-        status_struct=status_struct,
-        status_diag=status_diag,
-        pressure_unit_used=pressure_unit_used,
-        where_gsi_hdr=where_gsi_hdr,
-        where_gsi_lonlat=where_gsi_lonlat,
-        where_gsi_no_useful=where_gsi_no_useful,
-        where_events=where_events,
-        where_time=where_time,
-        where_units=where_units,
+    
+        # ---------------------------------------------------------------------
+        # Status finais
+        # ---------------------------------------------------------------------
+        status_struct=status_struct,              # OK / PROBLEMAS_ESTRUTURAIS
+        status_diag=status_diag,                  # OK / ATENÇÃO (conforme regras definidas)
+        pressure_unit_used=pressure_unit_used,    # unidade de pressão adotada (hpa/cb/pa)
+    
+        # ---------------------------------------------------------------------
+        # Exemplos ("onde") para facilitar inspeção manual
+        # Limitados por --where
+        # ---------------------------------------------------------------------
+        where_gsi_hdr=where_gsi_hdr,              # exemplos de header estrutural inválido
+        where_gsi_lonlat=where_gsi_lonlat,        # exemplos de lon/lat inválidos
+        where_gsi_no_useful=where_gsi_no_useful,  # exemplos sem variáveis úteis
+        where_events=where_events,                # exemplos sem EVN
+        where_time=where_time,                    # exemplos fora da janela temporal
+        where_units=where_units,                  # exemplos com unidades implausíveis
+    
+        # ---------------------------------------------------------------------
+        # Registro detalhado de falhas
+        # Cada entrada representa uma falha específica em um subset.
+        # Base para --report-csv
+        # ---------------------------------------------------------------------
         fail_records=fail_records,
     )
 
